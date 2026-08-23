@@ -1,0 +1,24 @@
+# A durable, at-least-once MPSC queue backed by in-memory and durable backends.
+[package]
+name = "persistent-queue"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "A durable, at-least-once MPSC queue backed by in-memory and durable backends (sled, redb)."
+repository = "https://github.com/rolandjitsu/persistent-queue"
+keywords = ["queue", "persistent", "durable", "mpsc", "storage"]
+categories = ["concurrency", "data-structures"]
+
+[features]
+default = []
+# On-disk backend backed by sled.
+sled = ["dep:sled"]
+# On-disk backend backed by redb.
+redb = ["dep:redb"]
+
+[dependencies]
+sled = { version = "0.34", optional = true }
+redb = { version = "2", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
