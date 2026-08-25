@@ -322,7 +322,7 @@ impl<S: Store> Producer<S> {
     }
 }
 
-/// The consumer half. Single consumer, so it is not clonable.
+/// The consumer half. Single consumer, so it does not implement `Clone`.
 pub struct Consumer<S> {
     shared: Arc<Shared<S>>,
 }
