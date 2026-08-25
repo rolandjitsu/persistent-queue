@@ -51,8 +51,8 @@ let (tx, rx) = Builder::new(store).capacity(1024).open().unwrap();
 
 Implement `Store` yourself for any other key/value store.
 
-- **One process per store.** `sled` and `redb` take an exclusive lock on their file,
-  so only one process can open a given database at a time.
+- **One process per store.** `sled`, `redb`, and `rocksdb` take an exclusive lock on
+  their files, so only one process can open a given database at a time.
 - **Corruption is surfaced, not repaired.** A backend error on open (including a
   corrupt store) is returned as `OpenError::Store`; the queue does not auto-repair or
   discard data. A store written by a newer on-disk format is rejected with
@@ -113,8 +113,6 @@ in-memory-fast, and durability cost is the backend's `fsync`. Reproduce with
 
 - **Codec features** (`serde`, `rkyv`) and a typed `Queue<T>` layer over the byte core.
 - **tokio async facade** (feature-gated), an async API over the sync core.
-- **A log-structured / append-only backend** (sequential appends + group fsync) for
-  much faster durable writes than a B-tree store.
 - **Relaxed ack durability**: at-least-once already tolerates redelivery, so acks need
   not fsync individually - batching or lazily flushing them roughly halves the
   per-message fsync cost.
