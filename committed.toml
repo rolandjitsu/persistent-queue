@@ -1,0 +1,8 @@
+# Enforce Conventional Commits (used by the local prek hook and the CI `committed` job).
+# Conventional types are lowercase, so the capitalized-subject rule is off.
+style = "conventional"
+subject_capitalized = false
+# Wrap the subject and body at 72 columns (matches AGENTS.md). Dependabot bodies can
+# exceed this; the CI `commits` job exempts them.
+line_length = 72
+allowed_types = ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"]

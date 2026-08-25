@@ -1,0 +1,48 @@
+# Local git hooks, managed by prek (https://github.com/j178/prek) - a fast, Rust,
+# no-Python reimplementation of pre-commit. Enable once with: prek install
+#
+# Mirrors CI where it's cheap: typos + Conventional Commits on commit, rustfmt on the
+# staged Rust files, and clippy on push (too heavy per commit). Rust hooks only fire when
+# Rust files change (types: [rust]).
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+
+repos:
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.49.0
+    hooks:
+      - id: typos
+        stages: [pre-commit]
+
+  - repo: https://github.com/crate-ci/committed
+    rev: v1.1.11
+    hooks:
+      # Per-commit: lint the message as it is written.
+      - id: committed
+        stages: [commit-msg]
+      # Pre-push: lint every commit about to be pushed (mirrors CI's range check),
+      # so a subject that slipped past commit-msg (an --amend, a --no-verify) is
+      # caught before it reaches CI. Reuses the same managed committed binary.
+      - id: committed
+        alias: committed-range
+        name: committed (whole push range)
+        stages: [pre-push]
+        always_run: true
+        pass_filenames: false
+        args: [origin/main..HEAD]
+
+  - repo: local
+    hooks:
+      - id: rustfmt
+        name: rustfmt
+        entry: rustfmt --edition 2024
+        language: system
+        types: [rust]
+        stages: [pre-commit]
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets --all-features --locked -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-push]

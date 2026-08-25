@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # Rust dependencies. Patch bumps batch into one PR that the
+  # dependabot-auto-merge workflow merges automatically once CI passes; minor
+  # and major updates arrive as individual PRs for manual review. The `chore`
+  # prefix keeps the commit subject Conventional Commits compliant.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    groups:
+      cargo-patch:
+        update-types: ["patch"]
+
+  # GitHub Actions pinned in the workflows (checkout, docker, install-action).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions-patch:
+        update-types: ["patch"]
