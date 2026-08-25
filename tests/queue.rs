@@ -187,6 +187,52 @@ fn rocksdb_reopen_redelivers_unacked() {
     }
 }
 
+// Many producers on real threads, Sync durability, tight capacity: the out-of-order
+// commit pattern that a reserve-time head advance would drop items from. Skipped under
+// Miri (too slow for this volume); the loom test covers the race deterministically.
+#[cfg_attr(miri, ignore)]
+#[test]
+fn concurrent_producers_lose_nothing() {
+    use std::collections::HashSet;
+    use std::thread;
+
+    let (tx, rx) = mem_queue(64);
+    let producers = 4u64;
+    let per = 500u64;
+    let mut handles = Vec::new();
+    for p in 0..producers {
+        let tx = tx.clone();
+        handles.push(thread::spawn(move || {
+            for i in 0..per {
+                tx.push(format!("{p}-{i}").as_bytes()).unwrap();
+            }
+        }));
+    }
+
+    let total = (producers * per) as usize;
+    let mut seen = HashSet::new();
+    let mut spins = 0u64;
+    while seen.len() < total {
+        match rx.reserve().unwrap() {
+            Some(item) => {
+                assert!(seen.insert(item.to_vec()), "duplicate delivery");
+                item.ack().unwrap();
+            }
+            None => {
+                spins += 1;
+                assert!(
+                    spins < 500_000_000,
+                    "an item was lost: the consumer starved"
+                );
+                thread::yield_now();
+            }
+        }
+    }
+    for handle in handles {
+        handle.join().unwrap();
+    }
+}
+
 fn mem_queue(capacity: usize) -> (Producer<MemStore>, Consumer<MemStore>) {
     Builder::new(MemStore::new())
         .capacity(capacity)

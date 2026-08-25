@@ -59,3 +59,39 @@ fn group_commit_flushes_every_producer() {
         assert_eq!(seen, 2);
     });
 }
+
+// Two producers under Sync commit in either order while the consumer runs alongside.
+// Both items must be delivered: a head cursor that advanced in `reserve` would skip
+// the seq that commits second (it lands below the advanced head). loom explores the
+// interleavings; the spin guard turns a lost item into a failure instead of a hang.
+#[test]
+fn concurrent_producers_deliver_both_sync() {
+    loom::model(|| {
+        let (tx, rx) = Builder::new(MemStore::new()).capacity(4).open().unwrap();
+
+        let p1 = {
+            let tx = tx.clone();
+            loom::thread::spawn(move || tx.push(b"a").unwrap())
+        };
+        let p2 = {
+            let tx = tx.clone();
+            loom::thread::spawn(move || tx.push(b"b").unwrap())
+        };
+
+        let mut seen = 0;
+        let mut spins = 0;
+        while seen < 2 {
+            if let Some(item) = rx.reserve().unwrap() {
+                item.ack().unwrap();
+                seen += 1;
+            } else {
+                spins += 1;
+                assert!(spins < 1000, "an item was lost: the consumer starved");
+                loom::thread::yield_now();
+            }
+        }
+
+        p1.join().unwrap();
+        p2.join().unwrap();
+    });
+}

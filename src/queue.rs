@@ -42,6 +42,15 @@ impl Durability {
 
 struct Inner {
     tail: u64,
+    // Lowest un-acked seq: where `reserve` starts scanning, so it skips the acked
+    // prefix (and, on an LSM backend, the tombstones acks leave). Advanced only on
+    // ack, never in reserve - a producer claims a seq under the lock but commits it
+    // after, so a lower seq can still appear; advancing in reserve could skip it.
+    head: u64,
+    // Seqs acked out of order, above `head`. On acking `head`, it jumps the whole
+    // contiguous acked run at once and stays just below the live entries, so the scan
+    // does not wade through tombstones even when producers commit out of order.
+    acked_above: BTreeSet<u64>,
     len: usize,
     reserved: BTreeSet<u64>,
     closed: bool,
@@ -179,10 +188,14 @@ impl<S: Store> Builder<S> {
         };
 
         let mut len = 0usize;
+        let mut head = tail;
         let mut cursor = ENTRY_LOW.to_vec();
         while let Some((key, _)) = self.store.seek(&cursor).map_err(OpenError::Store)? {
             if !is_entry(&key) {
                 break;
+            }
+            if len == 0 {
+                head = seq_of(&key);
             }
             len += 1;
             cursor = entry_key(seq_of(&key) + 1).to_vec();
@@ -195,6 +208,8 @@ impl<S: Store> Builder<S> {
             group,
             inner: Mutex::new(Inner {
                 tail,
+                head,
+                acked_above: BTreeSet::new(),
                 len,
                 reserved: BTreeSet::new(),
                 closed: false,
@@ -316,7 +331,7 @@ impl<S: Store> Consumer<S> {
     /// Reserve the oldest unreserved item, or `None` if there is nothing to
     /// deliver. Ack or nack the returned [`Reserved`] to finish with it.
     pub fn reserve(&self) -> Result<Option<Reserved<S>>, S::Error> {
-        let mut cursor = ENTRY_LOW.to_vec();
+        let mut cursor = entry_key(self.shared.inner.lock().unwrap().head).to_vec();
         loop {
             match self.shared.store.seek(&cursor)? {
                 Some((key, value)) if is_entry(&key) => {
@@ -367,6 +382,18 @@ impl<S: Store> Reserved<S> {
             let mut inner = self.shared.inner.lock().unwrap();
             inner.reserved.remove(&self.seq);
             inner.len -= 1;
+            // Advance head only when the oldest un-acked entry is the one acked (a
+            // lower seq still being committed by a slow producer must never be
+            // skipped), then jump the contiguous run of out-of-order acks above it.
+            if self.seq == inner.head {
+                let mut next = inner.head + 1;
+                while inner.acked_above.remove(&next) {
+                    next += 1;
+                }
+                inner.head = next;
+            } else {
+                inner.acked_above.insert(self.seq);
+            }
         }
         self.shared.room.notify_one();
         self.done = true;
