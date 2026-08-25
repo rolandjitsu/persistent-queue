@@ -13,10 +13,11 @@ policies, and producer counts.
 ## Read this first
 
 The durable on-disk numbers come from the Linux box. On macOS only the in-memory
-numbers are shown: that run was under load and its durable path is dominated by the
-fsync barrier (macOS flushes differ from Linux), so it never gave a clean disk sweep.
-macOS in-memory is in fact faster than Linux here - the hardware is fine, the machines
-just differ.
+numbers are shown: that run's durable path is dominated by the fsync barrier (macOS
+flushes to the device differently than Linux), so it never gave a clean disk sweep.
+macOS is not slow overall - its in-memory numbers beat Linux here; it just pays more
+per fsync. The two machines differ in CPU, disk, and OS, so compare within a machine,
+not across.
 
 ## Linux (x86-64 workstation)
 
@@ -25,13 +26,11 @@ just differ.
 | Producers | Durability | Time    | Throughput   |
 | --------: | ---------- | ------: | -----------: |
 | 1         | Sync       | 10.2 ms | 0.98 Melem/s |
-| 1         | Group      | 11.6 ms | 0.86 Melem/s |
-| 4         | Sync       | 13.8 ms | 0.72 Melem/s |
-| 4         | Group      | 15.2 ms | 0.66 Melem/s |
+| 1         | Group      | 12.1 ms | 0.83 Melem/s |
 | 16        | Sync       | 15.6 ms | 0.64 Melem/s |
-| 16        | Group      | 20.6 ms | 0.49 Melem/s |
-| 64        | Sync       | 16.3 ms | 0.61 Melem/s |
-| 64        | Group      | 26.1 ms | 0.38 Melem/s |
+| 16        | Group      | 21.6 ms | 0.46 Melem/s |
+| 64        | Sync       | 17.9 ms | 0.56 Melem/s |
+| 64        | Group      | 26.3 ms | 0.38 Melem/s |
 
 ### On-disk, 200 messages
 
@@ -39,46 +38,43 @@ sled:
 
 | Producers | Durability | Time    | Throughput   |
 | --------: | ---------- | ------: | -----------: |
-| 1         | Sync       | 5.99 ms | 33.4 Kelem/s |
-| 1         | Group      | 6.31 ms | 31.7 Kelem/s |
-| 1         | None       | 3.37 ms | 59.3 Kelem/s |
-| 16        | Sync       | 6.03 ms | 33.2 Kelem/s |
-| 16        | Group      | 3.90 ms | 51.2 Kelem/s |
-| 16        | None       | 3.30 ms | 60.7 Kelem/s |
-| 64        | Sync       | 6.59 ms | 30.4 Kelem/s |
-| 64        | Group      | 4.16 ms | 48.1 Kelem/s |
-| 64        | None       | 4.03 ms | 49.7 Kelem/s |
+| 1         | Sync       | 7.26 ms | 27.5 Kelem/s |
+| 1         | Group      | 7.15 ms | 28.0 Kelem/s |
+| 1         | None       | 3.47 ms | 57.7 Kelem/s |
+| 16        | Sync       | 6.97 ms | 28.7 Kelem/s |
+| 16        | Group      | 4.91 ms | 40.8 Kelem/s |
+| 16        | None       | 3.72 ms | 53.8 Kelem/s |
+| 64        | Sync       | 7.92 ms | 25.3 Kelem/s |
+| 64        | Group      | 4.98 ms | 40.1 Kelem/s |
+| 64        | None       | 4.56 ms | 43.9 Kelem/s |
 
 redb:
 
 | Producers | Durability | Time    | Throughput   |
 | --------: | ---------- | ------: | -----------: |
-| 1         | Sync       | 5.00 ms | 40.0 Kelem/s |
-| 1         | Group      | 4.95 ms | 40.4 Kelem/s |
-| 1         | None       | 16.4 ms | 12.2 Kelem/s |
-| 16        | Sync       | 5.43 ms | 36.9 Kelem/s |
-| 16        | Group      | 3.28 ms | 61.1 Kelem/s |
-| 16        | None       | 16.7 ms | 11.9 Kelem/s |
-| 64        | Sync       | 6.61 ms | 30.3 Kelem/s |
-| 64        | Group      | 3.86 ms | 51.8 Kelem/s |
-| 64        | None       | 19.2 ms | 10.4 Kelem/s |
+| 1         | Sync       | 5.43 ms | 36.8 Kelem/s |
+| 1         | Group      | 5.52 ms | 36.2 Kelem/s |
+| 1         | None       | 16.8 ms | 11.9 Kelem/s |
+| 16        | Sync       | 5.71 ms | 35.0 Kelem/s |
+| 16        | Group      | 3.86 ms | 51.9 Kelem/s |
+| 16        | None       | 17.1 ms | 11.7 Kelem/s |
+| 64        | Sync       | 7.05 ms | 28.4 Kelem/s |
+| 64        | Group      | 4.21 ms | 47.5 Kelem/s |
+| 64        | None       | 19.7 ms | 10.2 Kelem/s |
 
 rocksdb:
 
-| Producers | Durability | Time   | Throughput   |
-| --------: | ---------- | -----: | -----------: |
-| 1         | Sync       | 190 ms | 1.05 Kelem/s |
-| 1         | Group      | 194 ms | 1.03 Kelem/s |
-| 1         | None       | 152 ms | 1.32 Kelem/s |
-| 16        | Sync       | 154 ms | 1.30 Kelem/s |
-| 16        | Group      | 155 ms | 1.29 Kelem/s |
-| 16        | None       | 154 ms | 1.30 Kelem/s |
-| 64        | Sync       | 146 ms | 1.37 Kelem/s |
-| 64        | Group      | 147 ms | 1.36 Kelem/s |
-| 64        | None       | 138 ms | 1.45 Kelem/s |
-
-(p4 rows omitted for space; they track p1/p16. Full output is what
-`cargo bench --all-features` prints.)
+| Producers | Durability | Time    | Throughput  |
+| --------: | ---------- | ------: | ----------: |
+| 1         | Sync       | 900 us  | 222 Kelem/s |
+| 1         | Group      | 935 us  | 214 Kelem/s |
+| 1         | None       | 816 us  | 245 Kelem/s |
+| 16        | Sync       | 1.44 ms | 139 Kelem/s |
+| 16        | Group      | 1.01 ms | 199 Kelem/s |
+| 16        | None       | 1.45 ms | 138 Kelem/s |
+| 64        | Sync       | 2.09 ms | 95.9 Kelem/s |
+| 64        | Group      | 1.96 ms | 102 Kelem/s |
+| 64        | None       | 1.99 ms | 101 Kelem/s |
 
 ## macOS (Apple-silicon laptop)
 
@@ -88,39 +84,24 @@ rocksdb:
 | --------: | ---------- | ------: | -----------: |
 | 1         | Sync       | 6.27 ms | 1.59 Melem/s |
 | 1         | Group      | 7.11 ms | 1.41 Melem/s |
-| 4         | Sync       | 15.5 ms | 0.65 Melem/s |
-| 4         | Group      | 15.0 ms | 0.67 Melem/s |
 | 16        | Sync       | 28.5 ms | 0.35 Melem/s |
 | 16        | Group      | 41.7 ms | 0.24 Melem/s |
-| 64        | Sync       | 23.5 ms | 0.43 Melem/s |
-| 64        | Group      | 38.2 ms | 0.26 Melem/s |
 
 Disk was not swept on macOS (see "Read this first"). Use the Linux numbers.
 
 ## Takeaways
 
-- The crate's own overhead is in-memory-fast; durability cost is the backend, not
-  this code.
-- **Group-commit works, on disk, under concurrency.** On Linux it pulls clearly ahead
-  of `Sync` from ~16 producers up (redb: 61 vs 37 Kelem/s at 16; sled: 51 vs 33). At
-  one producer it ties `Sync` - nothing to batch.
+- The crate's own overhead is in-memory-fast; durability cost is the backend.
+- **RocksDB is the fastest on-disk backend here** (~96-245 Kelem/s, several times
+  sled and redb). It relies on `reserve` seeking from the head cursor; a front-scan
+  is far slower on its LSM because of the tombstones acks leave.
+- **Group-commit wins on disk under concurrency** for the B-tree stores (redb
+  `group/p16` 52 vs `sync/p16` 35 Kelem/s; sled 41 vs 29). RocksDB barely changes -
+  its WAL already coalesces writes.
 - **Group-commit is a loss in memory** - no fsync to amortize, so its coordination is
-  pure overhead (slower than `Sync` at every producer count). Never `Group` on
-  `MemStore`.
-- **`None` is not always faster.** Fastest for sled; *slower* than `Sync` for redb
-  (~16 ms vs ~5 ms), because redb is copy-on-write and cannot reclaim the pages a
-  transaction frees until a durable commit - a `None`-only run never checkpoints, so
-  the store grows and that outweighs the fsync it skips. `None` also gives no crash
-  guarantee (see the durability table in the README); with redb there is no reason to
-  use it.
-- **RocksDB is ~30x slower here, and its durability policy barely matters** (`Sync`,
-  `Group`, and `None` all land near 150 ms), so the cost is not fsync. It is the
-  access pattern: `reserve` scans forward from the front on every call, and each `ack`
-  leaves an LSM tombstone that RocksDB keeps until compaction, so the scan wades
-  through a growing pile of deleted keys (and sets up a fresh iterator each time). A
-  B-tree (sled, redb) drops deleted keys immediately and scans cheaply. A head cursor
-  that seeks straight to the oldest live entry would let RocksDB skip the tombstones -
-  see the roadmap. For now, prefer sled or redb.
-- Acks are the remaining floor under `Group` (each still fsyncs); relaxing ack
-  durability is the next lever (roadmap).
-- Pick the policy and backend for your workload, and measure on your own hardware.
+  pure overhead. Never `Group` on `MemStore`.
+- **redb `None` is the outlier** (~11 Kelem/s, slower than its own `Sync`): redb is
+  copy-on-write and cannot reclaim pages until a durable commit, so a `None`-only run
+  never checkpoints and the store grows. `None` also gives no crash guarantee (see the
+  README durability table). With redb, prefer `Sync`/`Group`.
+- Pick the backend and policy for your workload, and measure on your own hardware.

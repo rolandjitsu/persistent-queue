@@ -118,8 +118,6 @@ in-memory-fast, and durability cost is the backend's `fsync`. Reproduce with
 - **Relaxed ack durability**: at-least-once already tolerates redelivery, so acks need
   not fsync individually - batching or lazily flushing them roughly halves the
   per-message fsync cost.
-- **A head cursor** for `reserve`: seek straight to the oldest live entry instead of
-  scanning from the front, so LSM backends (RocksDB) skip the tombstones acks leave.
 - **Richer delivery**: multiple / competing consumers with visibility timeouts,
   dead-letter handling after N redeliveries, priorities and delayed delivery.
 - **Byte-based capacity**, to bound on-disk size directly (today it bounds by unacked
