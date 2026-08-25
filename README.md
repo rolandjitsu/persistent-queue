@@ -1,6 +1,7 @@
 # persistent-queue
 
 [![CI](https://img.shields.io/github/actions/workflow/status/rolandjitsu/persistent-queue/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/rolandjitsu/persistent-queue/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/codecov/c/github/rolandjitsu/persistent-queue/main?style=flat-square)](https://codecov.io/gh/rolandjitsu/persistent-queue)
 [![crates.io](https://img.shields.io/crates/v/persistent-queue?style=flat-square)](https://crates.io/crates/persistent-queue)
 [![docs.rs](https://img.shields.io/docsrs/persistent-queue?style=flat-square)](https://docs.rs/persistent-queue)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](./LICENSE)
