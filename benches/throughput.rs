@@ -70,7 +70,10 @@ fn mem(c: &mut Criterion) {
     const TOTAL: usize = 10_000;
     let mut group = c.benchmark_group("mem");
     group.throughput(Throughput::Elements(TOTAL as u64));
-    for &producers in &[1usize, 4, 16, 64] {
+    group.sample_size(10);
+    group.warm_up_time(std::time::Duration::from_millis(500));
+    group.measurement_time(std::time::Duration::from_secs(2));
+    for &producers in &[1usize, 16, 64] {
         bench!(
             group,
             format!("sync/p{producers}"),
@@ -101,8 +104,8 @@ fn disk(c: &mut Criterion) {
     group.throughput(Throughput::Elements(TOTAL as u64));
     group.sample_size(10);
     group.warm_up_time(std::time::Duration::from_millis(500));
-    group.measurement_time(std::time::Duration::from_secs(3));
-    for &producers in &[1usize, 4, 16, 64] {
+    group.measurement_time(std::time::Duration::from_secs(2));
+    for &producers in &[1usize, 16, 64] {
         for (label, dur) in [
             ("sync", Durability::Sync),
             ("group", Durability::Group),
