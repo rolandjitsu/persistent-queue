@@ -15,17 +15,30 @@
 //! item.ack().unwrap();
 //! ```
 //!
+//! For typed messages, [`Builder::open_typed`] wraps the queue with a [`Codec`] that
+//! encodes on push and decodes on reserve (serde and bincode behind the `serde`
+//! feature).
+//!
 //! See `DESIGN.md` for the on-disk layout, crash recovery, and durability model.
 #![warn(missing_docs)]
 
+mod codec;
 mod error;
 mod queue;
 mod store;
 mod sync;
+mod typed;
 
+pub use codec::{Codec, CodecError};
 pub use error::{OpenError, PushError, TryPushError};
 pub use queue::{Builder, Consumer, Durability, Ends, Producer, Reserved};
 pub use store::{KeyValue, MemStore, Op, Store};
+pub use typed::{
+    ReserveError, TypedConsumer, TypedEnds, TypedProducer, TypedPushError, TypedReserved,
+};
+
+#[cfg(feature = "serde")]
+pub use codec::Bincode;
 
 #[cfg(feature = "redb")]
 pub use store::RedbStore;

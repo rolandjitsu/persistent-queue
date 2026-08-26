@@ -17,15 +17,20 @@ sled = ["dep:sled"]
 redb = ["dep:redb"]
 # On-disk backend backed by RocksDB (builds a bundled C++ RocksDB).
 rocksdb = ["dep:rocksdb"]
+# serde + bincode codec for the typed queue layer.
+serde = ["dep:serde", "dep:bincode"]
 
 [dependencies]
 sled = { version = "0.34", optional = true }
 redb = { version = "2", optional = true }
 rocksdb = { version = "0.22", optional = true }
+serde = { version = "1", optional = true }
+bincode = { version = "1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+serde = { version = "1", features = ["derive"] }
 
 # loom is pulled in only under `--cfg loom`, for the model-checked concurrency tests.
 [target.'cfg(loom)'.dependencies]

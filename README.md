@@ -41,6 +41,28 @@ let (tx, rx) = Builder::new(store).capacity(1024).open().unwrap();
 
 `RedbStore::open` works the same way behind the `redb` feature.
 
+For typed messages, open a typed queue with a `Codec` - serde and bincode behind the
+`serde` feature, or your own:
+
+```rust
+use persistent_queue::{Bincode, Builder, MemStore};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct Job {
+    id: u64,
+    name: String,
+}
+
+let (tx, rx) = Builder::new(MemStore::new()).open_typed(Bincode).unwrap();
+tx.push(&Job { id: 1, name: "build".into() }).unwrap();
+
+if let Some(item) = rx.reserve().unwrap() {
+    println!("{}", item.name); // derefs to the decoded value
+    item.ack().unwrap();
+}
+```
+
 ## Backends
 
 | Backend      | Feature   | Persistent | Notes                                     |
@@ -112,7 +134,6 @@ in-memory-fast, and durability cost is the backend's `fsync`. Reproduce with
 
 ## Roadmap
 
-- **Codec features** (`serde`, `rkyv`) and a typed `Queue<T>` layer over the byte core.
 - **tokio async facade** (feature-gated), an async API over the sync core.
 - **Relaxed ack durability**: at-least-once already tolerates redelivery, so acks need
   not fsync individually - batching or lazily flushing them roughly halves the
@@ -124,8 +145,8 @@ in-memory-fast, and durability cost is the backend's `fsync`. Reproduce with
 - **Effectively-once helper**: `Reserved::seq()` already survives redelivery as a
   stable id; an opt-in helper could persist processed seqs so the consumer dedupes
   automatically.
-- **Zero-copy reads**: return `Bytes` or borrowed data from the store to skip a copy
-  per reserve (pairs with the rkyv codec).
+- **An rkyv codec with zero-copy reads**: add an `rkyv` codec and return borrowed or
+  `Bytes` data from the store, so a reserve reads the archived value without a copy.
 
 ## Status
 
