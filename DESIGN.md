@@ -2,52 +2,26 @@
 
 A durable, at-least-once, multi-producer / single-consumer (MPSC) queue. Items are
 written to a pluggable byte store and survive process and machine crashes. The core
-is synchronous and depends on no runtime; an optional `tokio` feature adds an async
-facade.
+is synchronous and depends on no runtime.
 
-This document is the design we agreed before writing code. It is the contract the
-implementation and tests are written against.
+This is a reference for the internals and the reasoning behind them; the public API is
+documented on docs.rs.
 
-## Scope (v0.1)
+## Non-goals
 
-In:
-
-- Durable FIFO queue, bounded, with backpressure when full.
-- At-least-once delivery via reserve / ack.
-- Backend-agnostic storage behind a small `Store` trait; in-memory backend by
-  default, `sled` and `redb` behind features.
-- Sync core, optional `tokio` async facade.
-- A raw byte API, plus an optional typed layer behind a codec feature.
-
-Out (possible later, explicitly not in v0.1):
+Deliberately out of scope (some may arrive later - see the README roadmap):
 
 - Multiple or competing consumers.
 - Priorities, delayed / scheduled delivery, TTL, dead-letter queues.
-- Encryption or compression (do it in your codec if you need it).
-
-## Guarantees
-
-- **Durability.** Once `push` returns under the durable policy, the item survives a
-  crash. See the durability policies below for the weaker, faster modes.
-- **At-least-once.** Every pushed item is delivered at least once. It is removed only
-  when the consumer acks it. If the consumer crashes after handling an item but
-  before the ack is durable, the item is redelivered on restart. This is inherent:
-  the side effect and the ack cannot be made atomic across a crash.
-- **Not exactly-once.** The queue cannot promise it. To get effectively-once, the
-  consumer must be idempotent, or must record completion in the same transaction as
-  its own work (an idempotency key on the consumer side is the usual answer).
-- **Order.** FIFO by sequence number. Each `push` takes a short lock to grab the next
-  sequence number, so items are ordered by which push grabs it first: one producer's
-  items stay in order, and across producers it is first-come-first-served. `reserve`
-  hands items out oldest first.
+- Encryption or compression - do it in your codec if you need it.
 
 ## Model
 
 The queue is an ordered log keyed by a monotonic `u64` sequence number. Two cursors,
 `head` (oldest unacked) and `tail` (next sequence to write), walk that log. Neither
-cursor is persisted - both are derived from the stored keys on open (see Recovery).
-The set of currently reserved (in-flight) items is kept in memory only, which is
-exactly what makes recovery redeliver them.
+cursor is persisted - both are derived from the stored keys on open (see Recovery),
+then maintained in memory. The set of currently reserved (in-flight) items is kept in
+memory only, which is exactly what makes recovery redeliver them.
 
 ```
 key space (ordered):   [0x00] meta           <- format version, written once
@@ -81,10 +55,11 @@ stateDiagram-v2
 ```
 
 Keeping entries under a `0x01` prefix keeps them ordered and contiguous in the store
-and keeps the one-byte `0x00` meta record out of the entry range. The meta record
-holds only a format version (and room for flags); it deliberately does **not** hold
-`head` / `tail`, because a persisted cursor can disagree with the keys after a crash
-and then has to be reconciled against them anyway - so we skip it and derive.
+and keeps the one-byte `0x00` meta record out of the entry range. The seq is stored
+big-endian so lexicographic key order equals numeric order. The meta record holds only
+a format version (and room for flags); it deliberately does **not** hold `head` /
+`tail`, because a persisted cursor can disagree with the keys after a crash and then
+has to be reconciled against them anyway - so we skip it and derive.
 
 ### Why derive the cursors instead of storing them
 
@@ -92,8 +67,8 @@ On open we need `tail = max(existing entry key) + 1` and `head = min(existing en
 key)`. If we also stored `head`/`tail` in the meta record, a crash between writing an
 entry key and updating the meta record would leave them inconsistent, so recovery
 would still have to scan the keys to fix them up. Deriving is strictly simpler, has
-one source of truth (the keys), and both backends give min/max cheaply (a B-tree
-first/last).
+one source of truth (the keys), and every backend gives min/max cheaply (a B-tree
+first/last, an LSM bounded iterator).
 
 ## The `Store` trait
 
@@ -137,57 +112,13 @@ pub enum Op<'a> {
   and a producer only sees `Ok` after the fsync returns, so nothing is lost. Backends
   that offer atomic batches (sled, redb, rocksdb) are welcome to; we do not rely on it.
 
-Backends in v0.1: `mem` (a `Mutex<BTreeMap<Vec<u8>, Vec<u8>>>`, the default;
-`durable` is a no-op), `sled` (feature `sled`), `redb` (feature `redb`), and `rocksdb`
-(feature `rocksdb`, a bundled C++ build). Three on-disk backends give a real
-durability comparison in the benchmarks. Any other store - a raw append-only file, an
-object store - is a downstream `Store` impl.
+Backends: `mem` (a `Mutex<BTreeMap>`, the default; `durable` is a no-op), `sled`,
+`redb`, and `rocksdb` (a bundled C++ build), each behind its own feature. Any other
+store - a raw append-only file, an object store - is a downstream `Store` impl.
 
-## Public API
-
-The core is bytes in, bytes out. A typed layer sits on top behind a codec feature.
-
-```rust
-// Construction. Capacity is the max number of unacked items before push blocks.
-let queue = Builder::new(store)
-    .capacity(1024)                 // backpressure bound (unacked items)
-    .durability(Durability::Group)  // Sync | Group | None
-    .open()?;                       // derives head/tail, recovers state
-
-// Producer (sync core). Blocks while the queue is full.
-queue.push(&bytes)?;                // PushError::Closed
-queue.try_push(&bytes)?;            // TryPushError::{Full, Closed}
-
-// Consumer (single consumer). None when empty.
-if let Some(item) = queue.reserve()? {   // Reserved<'_>
-    handle(&item);                       // Deref -> &[u8]
-    item.ack()?;                         // remove, advance head, commit
-    // item.nack()?  -> return for redelivery
-    // dropping without ack == nack (safe default; nothing is lost on a panic)
-}
-```
-
-- `Reserved` derefs to `&[u8]`, and exposes `seq()` and `ack()` / `nack()`. Its
-  `Drop` is a nack: if the consumer panics or drops it, the item stays for
-  redelivery. This is the opposite of `weighted-mpsc`'s `Lease` (whose drop releases)
-  - deliberately a different type name so the difference is loud.
-- `close()` marks the queue closed: pending and future `push` calls return `Closed`,
-  the consumer drains what remains, then `reserve` returns `None`.
-
-### Typed layer
-
-Behind a codec feature, a thin wrapper serialises `T` to bytes on push and back on
-reserve:
-
-```rust
-let queue: Queue<Job> = Builder::new(store).capacity(1024).open_typed()?; // serde/bincode
-queue.push(&job)?;
-let item = queue.reserve()?;   // Reserved<Job>, Deref -> &Job
-```
-
-- Feature `serde` uses `serde` + `bincode`. Feature `rkyv` stores the `rkyv`
-  encoding, and can expose the archived view without a full decode - the zero-copy
-  path. The store stays pure bytes; the codec is the only thing that knows the shape.
+A typed layer (`Builder::open_typed`) wraps this byte core with a `Codec` that encodes
+on push and decodes on reserve; `serde` + `bincode` is built in behind the `serde`
+feature. The store stays pure bytes - the codec is the only thing that knows the shape.
 
 ## Concurrency
 
@@ -199,14 +130,14 @@ One `Mutex<Inner>` guards the in-memory state: `tail`, `head`, the `reserved` se
   released. Holding it across the fsync would serialise every producer at disk speed
   and defeat having multiple producers at all.
 - **Backpressure.** When the queue is full (`unacked >= capacity`), `push` waits on a
-  condvar; `ack` signals it after freeing a slot. In the `tokio` facade the whole
-  call runs on `spawn_blocking`, so the blocking wait is on a blocking-pool thread,
-  not the async worker. (Caveat: many simultaneously-blocked producers tie up
-  blocking-pool threads; an async-native wait is a later refinement.)
-- **Single consumer.** `reserve` walks forward from `head` with `seek`, skipping any
-  seq already in the `reserved` set, marks the chosen seq reserved, and returns it.
-  `ack` deletes the key and, if it was at `head`, advances `head` via `seek`; an
-  out-of-order ack just deletes its key and lets `head` catch up later. Because
+  condvar; `ack` signals it after freeing a slot. (A planned tokio facade would run the
+  call on `spawn_blocking` so the blocking wait is off the async worker; an
+  async-native wait is a later refinement.)
+- **Single consumer.** `reserve` walks forward from `head` with `seek`, skips any seq
+  already in the `reserved` set, marks the chosen seq reserved, and returns it. `ack`
+  deletes the key; if it acked the seq at `head`, `head` advances past the contiguous
+  run of already-acked seqs (kept in memory), so `head` is always the oldest unacked
+  seq. An out-of-order ack is remembered and folded in once `head` reaches it. Because
   `reserved` is in memory, a crash clears it and every unacked entry is reservable
   again from `head`.
 
@@ -223,8 +154,7 @@ gaps via `seek`, and the producer of the missing seq never received `Ok`. A fail
 benign gap). loom verifies exactly this handoff.
 
 Lock-free is deliberately not a goal: the cost is dominated by the `commit` fsync,
-so removing an uncontended in-memory lock would not move the number. (We learned this
-the expensive way on `weighted-mpsc`.)
+so removing an uncontended in-memory lock would not move the number.
 
 ## Durability policies
 
@@ -259,19 +189,13 @@ Write ordering that makes this correct:
   durable leaves the key present, so the item is redelivered - at-least-once, as
   intended.
 
-## Testing and verification
+## Verification
 
-- **loom** on the in-memory concurrency: lock, condvar wake, reserved-set handoff,
-  and close, over a mock in-memory store. This is the part we own and where a lost
-  wakeup would live.
-- **Miri** on the unit and property tests for UB and data races.
-- **Property tests** with a fault-injecting `Store` that can stop applying writes at
-  an arbitrary point (simulated crash) and drop non-durable writes: assert no item is
-  lost, no item vanishes without an ack, redelivery is bounded, and the queue reopens
-  cleanly. Many producers on real OS threads, random sizes, tight capacity.
-- **Benchmarks** (criterion): backend sweep (mem vs sled vs redb), durability sweep
-  (`Sync` / `Group` / `None`), group-commit batch-size sweep, producer sweep
-  (1 / 4 / 16 / 64), and a codec sweep (serde/bincode vs rkyv, including rkyv's
-  zero-copy read path). The in-memory + `None` number is the baseline (our bookkeeping
-  only); the on-disk + `Sync` number is the true cost of durability; the curve
-  between them is the point.
+- **loom** model-checks the in-memory concurrency: the lock, the condvar wake, the
+  reserved-set handoff, close, and the out-of-order-commit race, over a mock store.
+- **Miri** runs the unit and integration tests for undefined behaviour and data races.
+- A **fault-injecting store** simulates a crash (stop applying writes at an arbitrary
+  point, drop non-durable writes) and a failing `commit`, asserting no item is lost and
+  the queue reopens cleanly.
+- **Benchmarks** (criterion): throughput across backends, durability policies, and
+  producer counts is in [BENCHMARKS.md](./BENCHMARKS.md).
