@@ -7,7 +7,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use persistent_queue::{Builder, Op, PushError, Store};
+use persistent_queue::{Builder, Durability, Op, PushError, Store};
 
 #[test]
 fn crash_and_reopen_loses_no_item() {
@@ -74,12 +74,69 @@ fn commit_failure_is_reported_and_state_stays_consistent() {
     assert!(rx.reserve().unwrap().is_none());
 }
 
-// A shared in-memory store: data lives behind an Arc, so a queue can be dropped
-// ("crash") and a new one opened over the same data ("reopen"). It can also fail
-// commits after a set count, to exercise the error paths.
+#[test]
+fn non_durable_acks_redeliver_after_a_crash() {
+    let store = SharedMem::default();
+
+    // Durable pushes, but relaxed (non-durable) acks.
+    let (tx, rx) = Builder::new(store.clone())
+        .capacity(8)
+        .durability(Durability::Sync)
+        .durable_acks(false)
+        .open()
+        .unwrap();
+    tx.push(b"a").unwrap();
+    tx.push(b"b").unwrap();
+
+    // Ack both; the deletes are not fsync'd, so a crash loses them.
+    rx.reserve().unwrap().unwrap().ack().unwrap();
+    rx.reserve().unwrap().unwrap().ack().unwrap();
+    assert!(rx.reserve().unwrap().is_none());
+
+    store.crash(); // drop everything not fsync'd -> the acks are gone
+
+    // Reopen: both items come back, because their acks did not survive.
+    let (_tx, rx) = Builder::new(store.clone()).capacity(8).open().unwrap();
+    let mut seqs = Vec::new();
+    while let Some(item) = rx.reserve().unwrap() {
+        seqs.push(item.seq());
+        item.ack().unwrap();
+    }
+    seqs.sort_unstable();
+    assert_eq!(seqs, vec![0, 1], "non-durable acks are lost on crash");
+}
+
+#[test]
+fn durable_acks_survive_a_crash() {
+    let store = SharedMem::default();
+
+    // Default policy: pushes and acks both fsync.
+    let (tx, rx) = Builder::new(store.clone())
+        .capacity(8)
+        .durability(Durability::Sync)
+        .open()
+        .unwrap();
+    tx.push(b"a").unwrap();
+    rx.reserve().unwrap().unwrap().ack().unwrap();
+
+    store.crash();
+
+    let (_tx, rx) = Builder::new(store.clone()).capacity(8).open().unwrap();
+    assert!(
+        rx.reserve().unwrap().is_none(),
+        "a durable ack survives the crash"
+    );
+}
+
+// A shared in-memory store that models fsync. Writes land in `live` immediately (what
+// the running process sees); a durable commit also snapshots `live` into `synced` (the
+// on-disk state). `crash()` reverts `live` to `synced`, dropping everything not yet
+// fsync'd - a power loss. It can also fail commits after a set count, to exercise the
+// error paths. Data is behind Arcs, so a queue can be dropped and reopened over it.
 #[derive(Clone, Default)]
 struct SharedMem {
-    map: Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>,
+    live: Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>,
+    synced: Arc<Mutex<BTreeMap<Vec<u8>, Vec<u8>>>>,
     commits: Arc<AtomicUsize>,
     fail_at: Arc<Mutex<Option<usize>>>,
 }
@@ -92,18 +149,24 @@ impl SharedMem {
     fn stop_failing(&self) {
         *self.fail_at.lock().unwrap() = None;
     }
+
+    // Model a power loss: drop everything not yet made durable.
+    fn crash(&self) {
+        let synced = self.synced.lock().unwrap().clone();
+        *self.live.lock().unwrap() = synced;
+    }
 }
 
 impl Store for SharedMem {
     type Error = FaultError;
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, FaultError> {
-        Ok(self.map.lock().unwrap().get(key).cloned())
+        Ok(self.live.lock().unwrap().get(key).cloned())
     }
 
     fn seek(&self, from: &[u8]) -> Result<Option<(Vec<u8>, Vec<u8>)>, FaultError> {
         Ok(self
-            .map
+            .live
             .lock()
             .unwrap()
             .range(from.to_vec()..)
@@ -113,7 +176,7 @@ impl Store for SharedMem {
 
     fn seek_back(&self, upto: &[u8]) -> Result<Option<(Vec<u8>, Vec<u8>)>, FaultError> {
         Ok(self
-            .map
+            .live
             .lock()
             .unwrap()
             .range(..=upto.to_vec())
@@ -121,21 +184,26 @@ impl Store for SharedMem {
             .map(|(k, v)| (k.clone(), v.clone())))
     }
 
-    fn commit(&self, ops: &[Op<'_>], _durable: bool) -> Result<(), FaultError> {
+    fn commit(&self, ops: &[Op<'_>], durable: bool) -> Result<(), FaultError> {
         let n = self.commits.fetch_add(1, Ordering::SeqCst);
         if matches!(*self.fail_at.lock().unwrap(), Some(fail) if n >= fail) {
             return Err(FaultError);
         }
-        let mut map = self.map.lock().unwrap();
+        let mut live = self.live.lock().unwrap();
         for op in ops {
             match op {
                 Op::Put(k, v) => {
-                    map.insert(k.to_vec(), v.to_vec());
+                    live.insert(k.to_vec(), v.to_vec());
                 }
                 Op::Delete(k) => {
-                    map.remove(*k);
+                    live.remove(*k);
                 }
             }
+        }
+        // An fsync flushes everything buffered so far, so the whole live state
+        // becomes durable, not just this batch.
+        if durable {
+            *self.synced.lock().unwrap() = live.clone();
         }
         Ok(())
     }

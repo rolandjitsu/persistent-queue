@@ -19,11 +19,13 @@ const FORMAT_VERSION: u8 = 1;
 /// How writes are made durable.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Durability {
-    /// fsync every push and ack. Strongest, slowest.
+    /// fsync every push and ack (acks unless [`Builder::durable_acks`] is off).
+    /// Strongest, slowest.
     #[default]
     Sync,
-    /// Batch concurrent pushes behind a single fsync; acks still fsync each. Same
-    /// durability as `Sync` with far less fsync overhead under load.
+    /// Batch concurrent pushes behind a single fsync; acks fsync each by default
+    /// (see [`Builder::durable_acks`]). Same durability as `Sync` with far less
+    /// fsync overhead under load.
     Group,
     /// Do not fsync. Fastest, but no durability guarantee: recent items can be lost
     /// on a crash (the backend persists on its own schedule, if at all).
@@ -60,6 +62,7 @@ struct Shared<S> {
     store: S,
     capacity: usize,
     durable: bool,
+    ack_durable: bool,
     group: bool,
     inner: Mutex<Inner>,
     room: Condvar,
@@ -135,6 +138,7 @@ pub struct Builder<S> {
     store: S,
     capacity: usize,
     durability: Durability,
+    durable_acks: bool,
 }
 
 impl<S: Store> Builder<S> {
@@ -144,6 +148,7 @@ impl<S: Store> Builder<S> {
             store,
             capacity: 1024,
             durability: Durability::Sync,
+            durable_acks: true,
         }
     }
 
@@ -160,10 +165,24 @@ impl<S: Store> Builder<S> {
         self
     }
 
+    /// Set whether acks are made durable (fsync'd). Defaults to `true`.
+    ///
+    /// At-least-once delivery does not need the ack itself to be durable: if an ack
+    /// is lost to a crash, the item is simply redelivered. Setting this to `false`
+    /// skips the ack fsync - roughly halving the per-message fsync cost under
+    /// [`Durability::Sync`] - in exchange for redelivering the items whose acks had
+    /// not reached disk when the process crashed. It never weakens the delivery
+    /// guarantee, and has no effect under [`Durability::None`] (nothing fsyncs).
+    pub fn durable_acks(mut self, durable_acks: bool) -> Self {
+        self.durable_acks = durable_acks;
+        self
+    }
+
     /// Open the queue, recovering any items already in the store.
     pub fn open(self) -> Result<Ends<S>, OpenError<S::Error>> {
         let durable = self.durability.durable();
         let group = self.durability.group();
+        let ack_durable = durable && self.durable_acks;
 
         match self.store.get(&META_KEY).map_err(OpenError::Store)? {
             Some(meta) => {
@@ -205,6 +224,7 @@ impl<S: Store> Builder<S> {
             store: self.store,
             capacity: self.capacity,
             durable,
+            ack_durable,
             group,
             inner: Mutex::new(Inner {
                 tail,
@@ -372,12 +392,13 @@ impl<S: Store> Reserved<S> {
         self.seq
     }
 
-    /// Remove the item from the queue, committed per the durability policy.
+    /// Remove the item from the queue, committed per the durability policy (see
+    /// [`Builder::durable_acks`]).
     pub fn ack(mut self) -> Result<(), S::Error> {
         let key = entry_key(self.seq);
         self.shared
             .store
-            .commit(&[Op::Delete(&key)], self.shared.durable)?;
+            .commit(&[Op::Delete(&key)], self.shared.ack_durable)?;
         {
             let mut inner = self.shared.inner.lock().unwrap();
             inner.reserved.remove(&self.seq);
