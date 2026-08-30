@@ -54,6 +54,8 @@ struct Inner {
     // does not wade through tombstones even when producers commit out of order.
     acked_above: BTreeSet<u64>,
     len: usize,
+    // Total bytes of unacked items, for the optional `max_bytes` bound.
+    bytes: usize,
     reserved: BTreeSet<u64>,
     closed: bool,
 }
@@ -61,6 +63,7 @@ struct Inner {
 struct Shared<S> {
     store: S,
     capacity: usize,
+    max_bytes: usize,
     durable: bool,
     ack_durable: bool,
     group: bool,
@@ -78,6 +81,13 @@ struct GroupState {
 }
 
 impl<S: Store> Shared<S> {
+    // Whether a value of `v` bytes can be admitted now: under the item-count
+    // capacity, and either under the byte bound or into an empty queue (so a single
+    // item larger than `max_bytes` still makes progress instead of deadlocking).
+    fn admits(&self, len: usize, bytes: usize, v: usize) -> bool {
+        len < self.capacity && (len == 0 || bytes.saturating_add(v) <= self.max_bytes)
+    }
+
     // Batch this entry with other concurrent pushes and make the batch durable with
     // one fsync. The first caller in flushes the whole pending batch; the rest wait
     // for their seq to be recorded.
@@ -137,16 +147,18 @@ pub type Ends<S> = (Producer<S>, Consumer<S>);
 pub struct Builder<S> {
     store: S,
     capacity: usize,
+    max_bytes: usize,
     durability: Durability,
     durable_acks: bool,
 }
 
 impl<S: Store> Builder<S> {
-    /// Start a builder over `store` (capacity 1024, [`Durability::Sync`]).
+    /// Start a builder over `store` (1024 items, unbounded bytes, [`Durability::Sync`]).
     pub fn new(store: S) -> Self {
         Self {
             store,
             capacity: 1024,
+            max_bytes: usize::MAX,
             durability: Durability::Sync,
             durable_acks: true,
         }
@@ -156,6 +168,17 @@ impl<S: Store> Builder<S> {
     pub fn capacity(mut self, capacity: usize) -> Self {
         assert!(capacity > 0, "capacity must be greater than 0");
         self.capacity = capacity;
+        self
+    }
+
+    /// Also bound the queue by the total bytes of unacked items (default:
+    /// unbounded). `push` blocks when either this or the item-count
+    /// [`capacity`](Self::capacity) would be exceeded. An item larger than
+    /// `max_bytes` is still admitted into an empty queue, so one large item cannot
+    /// deadlock. Must be > 0.
+    pub fn max_bytes(mut self, max_bytes: usize) -> Self {
+        assert!(max_bytes > 0, "max_bytes must be greater than 0");
+        self.max_bytes = max_bytes;
         self
     }
 
@@ -207,9 +230,10 @@ impl<S: Store> Builder<S> {
         };
 
         let mut len = 0usize;
+        let mut bytes = 0usize;
         let mut head = tail;
         let mut cursor = ENTRY_LOW.to_vec();
-        while let Some((key, _)) = self.store.seek(&cursor).map_err(OpenError::Store)? {
+        while let Some((key, value)) = self.store.seek(&cursor).map_err(OpenError::Store)? {
             if !is_entry(&key) {
                 break;
             }
@@ -217,12 +241,14 @@ impl<S: Store> Builder<S> {
                 head = seq_of(&key);
             }
             len += 1;
+            bytes += value.len();
             cursor = entry_key(seq_of(&key) + 1).to_vec();
         }
 
         let shared = Arc::new(Shared {
             store: self.store,
             capacity: self.capacity,
+            max_bytes: self.max_bytes,
             durable,
             ack_durable,
             group,
@@ -231,6 +257,7 @@ impl<S: Store> Builder<S> {
                 head,
                 acked_above: BTreeSet::new(),
                 len,
+                bytes,
                 reserved: BTreeSet::new(),
                 closed: false,
             }),
@@ -269,7 +296,7 @@ impl<S: Store> Producer<S> {
                 if inner.closed {
                     return Err(PushError::Closed);
                 }
-                if inner.len < self.shared.capacity {
+                if self.shared.admits(inner.len, inner.bytes, value.len()) {
                     break;
                 }
                 inner = self.shared.room.wait(inner).unwrap();
@@ -277,6 +304,7 @@ impl<S: Store> Producer<S> {
             let seq = inner.tail;
             inner.tail += 1;
             inner.len += 1;
+            inner.bytes += value.len();
             seq
         };
         self.write(seq, value).map_err(PushError::Store)
@@ -289,12 +317,13 @@ impl<S: Store> Producer<S> {
             if inner.closed {
                 return Err(TryPushError::Closed);
             }
-            if inner.len >= self.shared.capacity {
+            if !self.shared.admits(inner.len, inner.bytes, value.len()) {
                 return Err(TryPushError::Full);
             }
             let seq = inner.tail;
             inner.tail += 1;
             inner.len += 1;
+            inner.bytes += value.len();
             seq
         };
         self.write(seq, value).map_err(TryPushError::Store)
@@ -334,6 +363,7 @@ impl<S: Store> Producer<S> {
                 {
                     let mut inner = self.shared.inner.lock().unwrap();
                     inner.len -= 1;
+                    inner.bytes -= value.len();
                 }
                 self.shared.room.notify_one();
                 Err(e)
@@ -403,6 +433,7 @@ impl<S: Store> Reserved<S> {
             let mut inner = self.shared.inner.lock().unwrap();
             inner.reserved.remove(&self.seq);
             inner.len -= 1;
+            inner.bytes -= self.value.len();
             // Advance head only when the oldest un-acked entry is the one acked (a
             // lower seq still being committed by a slow producer must never be
             // skipped), then jump the contiguous run of out-of-order acks above it.
@@ -599,6 +630,61 @@ mod tests {
             item.ack().unwrap();
         }
         assert!(rx.reserve().unwrap().is_none());
+    }
+
+    #[test]
+    fn max_bytes_bounds_by_total_size() {
+        let (tx, rx) = Builder::new(MemStore::new())
+            .capacity(100)
+            .max_bytes(10)
+            .open()
+            .unwrap();
+        tx.push(b"aaaaa").unwrap();
+        tx.push(b"bbbbb").unwrap(); // total 10 bytes, at the bound
+        assert!(matches!(tx.try_push(b"c"), Err(TryPushError::Full)));
+        rx.reserve().unwrap().unwrap().ack().unwrap(); // frees 5 bytes
+        tx.try_push(b"c").unwrap();
+    }
+
+    #[test]
+    fn oversized_item_is_admitted_into_an_empty_queue() {
+        let (tx, rx) = Builder::new(MemStore::new())
+            .capacity(100)
+            .max_bytes(4)
+            .open()
+            .unwrap();
+        tx.push(b"way bigger than four").unwrap(); // admitted: queue was empty
+        assert!(matches!(tx.try_push(b"x"), Err(TryPushError::Full)));
+        rx.reserve().unwrap().unwrap().ack().unwrap();
+        tx.try_push(b"x").unwrap();
+    }
+
+    #[test]
+    fn open_recovers_byte_accounting() {
+        let store = MemStore::new();
+        store
+            .commit(
+                &[
+                    Op::Put(&entry_key(0), b"hello"),
+                    Op::Put(&entry_key(1), b"world!!"),
+                ],
+                false,
+            )
+            .unwrap();
+
+        // 5 + 7 = 12 bytes recovered as unacked, at the byte bound.
+        let (tx, rx) = Builder::new(store)
+            .capacity(100)
+            .max_bytes(12)
+            .open()
+            .unwrap();
+        assert_eq!(tx.len(), 2);
+        assert!(matches!(tx.try_push(b"x"), Err(TryPushError::Full)));
+
+        let a = rx.reserve().unwrap().unwrap();
+        assert_eq!(a.seq(), 0);
+        a.ack().unwrap(); // frees "hello" (5 bytes); must not underflow
+        tx.try_push(b"x").unwrap();
     }
 
     fn mem(capacity: usize) -> (Producer<MemStore>, Consumer<MemStore>) {

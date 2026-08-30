@@ -93,12 +93,17 @@ Implement `Store` yourself for any other key/value store.
 - **At-least-once.** Every pushed item is delivered at least once. A crash between
   handling an item and its durable ack redelivers it. True exactly-once is not
   possible from the queue alone; `Reserved::seq()` is a stable id you can dedupe on
-  for effectively-once (see the roadmap).
+  for effectively-once.
 - **Order.** FIFO by sequence number; `reserve` hands items out oldest first.
 
 Durability is a policy on the builder: `Sync` (fsync every push and ack), `Group`
 (batch concurrent pushes behind one fsync), or `None` (no fsync - fastest, but recent
 items can be lost on a crash). `MemStore` never persists, regardless of policy.
+
+`durable_acks(false)` drops the ack fsync - at-least-once still holds, a lost ack just
+redelivers - roughly halving the per-message fsync cost under `Sync`. Capacity bounds
+the unacked item count (`capacity`) and, optionally, their total bytes (`max_bytes`);
+`push` blocks when either is reached.
 
 What survives a crash (process exit or power loss):
 
@@ -135,16 +140,8 @@ in-memory-fast, and durability cost is the backend's `fsync`. Reproduce with
 ## Roadmap
 
 - **tokio async facade** (feature-gated), an async API over the sync core.
-- **Relaxed ack durability**: at-least-once already tolerates redelivery, so acks need
-  not fsync individually - batching or lazily flushing them roughly halves the
-  per-message fsync cost.
 - **Richer delivery**: multiple / competing consumers with visibility timeouts,
   dead-letter handling after N redeliveries, priorities and delayed delivery.
-- **Byte-based capacity**, to bound on-disk size directly (today it bounds by unacked
-  count).
-- **Effectively-once helper**: `Reserved::seq()` already survives redelivery as a
-  stable id; an opt-in helper could persist processed seqs so the consumer dedupes
-  automatically.
 - **An rkyv codec with zero-copy reads**: add an `rkyv` codec and return borrowed or
   `Bytes` data from the store, so a reserve reads the archived value without a copy.
 

@@ -129,8 +129,9 @@ One `Mutex<Inner>` guards the in-memory state: `tail`, `head`, the `reserved` se
   sequence number and a capacity slot; the `commit` (the fsync) runs after the lock is
   released. Holding it across the fsync would serialise every producer at disk speed
   and defeat having multiple producers at all.
-- **Backpressure.** When the queue is full (`unacked >= capacity`), `push` waits on a
-  condvar; `ack` signals it after freeing a slot. (A planned tokio facade would run the
+- **Backpressure.** When the queue is full - unacked count at `capacity`, or unacked
+  bytes at `max_bytes` - `push` waits on a condvar; `ack` signals it after freeing a
+  slot. (A planned tokio facade would run the
   call on `spawn_blocking` so the blocking wait is off the async worker; an
   async-native wait is a later refinement.)
 - **Single consumer.** `reserve` walks forward from `head` with `seek`, skips any seq
