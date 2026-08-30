@@ -131,9 +131,9 @@ One `Mutex<Inner>` guards the in-memory state: `tail`, `head`, the `reserved` se
   and defeat having multiple producers at all.
 - **Backpressure.** When the queue is full - unacked count at `capacity`, or unacked
   bytes at `max_bytes` - `push` waits on a condvar; `ack` signals it after freeing a
-  slot. (A planned tokio facade would run the
-  call on `spawn_blocking` so the blocking wait is off the async worker; an
-  async-native wait is a later refinement.)
+  slot. (The `tokio` facade runs the store I/O on
+  `spawn_blocking` but waits asynchronously, so a blocked producer or consumer costs a
+  task, not a blocking-pool thread.)
 - **Single consumer.** `reserve` walks forward from `head` with `seek`, skips any seq
   already in the `reserved` set, marks the chosen seq reserved, and returns it. `ack`
   deletes the key; if it acked the seq at `head`, `head` advances past the contiguous

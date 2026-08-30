@@ -405,6 +405,12 @@ impl<S: Store> Consumer<S> {
             }
         }
     }
+
+    // For the async facade: the queue is closed and nothing remains to reserve.
+    pub(crate) fn is_drained(&self) -> bool {
+        let inner = self.shared.inner.lock().unwrap();
+        inner.closed && inner.len == 0
+    }
 }
 
 /// A reserved (in-flight) item. Derefs to its bytes; [`ack`](Reserved::ack)

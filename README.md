@@ -12,7 +12,8 @@ Many producers push byte payloads; a single consumer reserves each one and holds
 in flight until it acks (removes) or nacks (returns) it. A dropped reservation, a
 panic, or a crash all put the item back, so nothing is lost. Storage is a pluggable
 `Store` - in-memory by default, `sled` or `redb` behind features, or your own - and
-the core is synchronous and runtime-agnostic. See `DESIGN.md` for the on-disk layout,
+the core is synchronous and runtime-agnostic, with an optional `tokio` facade. See
+`DESIGN.md` for the on-disk layout,
 cursors, and crash recovery.
 
 ## Usage
@@ -60,6 +61,21 @@ tx.push(&Job { id: 1, name: "build".into() }).unwrap();
 if let Some(item) = rx.reserve().unwrap() {
     println!("{}", item.name); // derefs to the decoded value
     item.ack().unwrap();
+}
+```
+
+With the `tokio` feature, `open_async` gives async handles: store I/O runs on tokio's
+blocking pool, and waiting (for capacity, or the next item) is async - a blocked
+`push` or `reserve` costs a task, not a thread:
+
+```rust,ignore
+use persistent_queue::{Builder, MemStore};
+
+let (tx, rx) = Builder::new(MemStore::new()).open_async().await.unwrap();
+tx.push(b"job".to_vec()).await.unwrap();
+
+if let Some(item) = rx.reserve().await.unwrap() {
+    item.ack().await.unwrap();
 }
 ```
 
@@ -139,7 +155,6 @@ in-memory-fast, and durability cost is the backend's `fsync`. Reproduce with
 
 ## Roadmap
 
-- **tokio async facade** (feature-gated), an async API over the sync core.
 - **Richer delivery**: multiple / competing consumers with visibility timeouts,
   dead-letter handling after N redeliveries, priorities and delayed delivery.
 - **An rkyv codec with zero-copy reads**: add an `rkyv` codec and return borrowed or

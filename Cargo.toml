@@ -19,6 +19,8 @@ redb = ["dep:redb"]
 rocksdb = ["dep:rocksdb"]
 # serde + bincode codec for the typed queue layer.
 serde = ["dep:serde", "dep:bincode"]
+# tokio async facade over the sync core.
+tokio = ["dep:tokio"]
 
 [dependencies]
 sled = { version = "0.34", optional = true }
@@ -26,11 +28,13 @@ redb = { version = "2", optional = true }
 rocksdb = { version = "0.22", optional = true }
 serde = { version = "1", optional = true }
 bincode = { version = "1", optional = true }
+tokio = { version = "1", optional = true, features = ["rt", "sync"] }
 
 [dev-dependencies]
 tempfile = "3"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 # loom is pulled in only under `--cfg loom`, for the model-checked concurrency tests.
 [target.'cfg(loom)'.dependencies]
