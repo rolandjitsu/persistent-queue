@@ -24,6 +24,8 @@
 //! See `DESIGN.md` for the on-disk layout, crash recovery, and durability model.
 #![warn(missing_docs)]
 
+#[cfg(feature = "rkyv")]
+mod archived;
 #[cfg(feature = "tokio")]
 mod async_queue;
 mod codec;
@@ -41,6 +43,10 @@ pub use typed::{
     ReserveError, TypedConsumer, TypedEnds, TypedProducer, TypedPushError, TypedReserved,
 };
 
+#[cfg(feature = "rkyv")]
+pub use archived::{
+    Archivable, ArchivedConsumer, ArchivedEnds, ArchivedProducer, ArchivedReserved,
+};
 #[cfg(feature = "tokio")]
 pub use async_queue::{AsyncConsumer, AsyncEnds, AsyncProducer, AsyncReserved};
 #[cfg(feature = "serde")]

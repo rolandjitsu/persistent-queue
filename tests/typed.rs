@@ -159,4 +159,25 @@ mod rkyv_codec {
 
         assert!(rx.reserve().unwrap().is_none());
     }
+
+    #[test]
+    fn archived_reads_without_decoding() {
+        let (tx, rx) = Builder::new(MemStore::new())
+            .open_archived::<Job>()
+            .unwrap();
+        tx.push(&Job {
+            id: 5,
+            name: "zero-copy".into(),
+        })
+        .unwrap();
+
+        let item = rx.reserve().unwrap().unwrap();
+        let view = item.get();
+        assert_eq!(view.id.to_native(), 5);
+        assert_eq!(view.name.as_str(), "zero-copy");
+        assert_eq!(item.seq(), 0);
+        item.ack().unwrap();
+
+        assert!(rx.reserve().unwrap().is_none());
+    }
 }
