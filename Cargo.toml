@@ -60,3 +60,8 @@ harness = false
 name = "async_overhead"
 harness = false
 required-features = ["tokio"]
+
+[[bench]]
+name = "codec"
+harness = false
+required-features = ["serde", "rkyv"]

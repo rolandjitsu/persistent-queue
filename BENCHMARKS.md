@@ -107,6 +107,29 @@ op, and a rounding error next to an fsync. One push + reserve + ack, macOS:
   once a durable write is involved.
 - Reproduce with `cargo bench --features tokio,sled --bench async_overhead`.
 
+## Codec cost
+
+Per-message cost of the typed layer's codecs, on a queue-message-shaped record (a u64,
+u32, u64, a short string, and a 1 KB payload): encode, full owned decode, and reading
+a single field. macOS:
+
+| operation      | `Bincode` | `Rkyv` | speedup |
+| -------------- | --------: | -----: | ------: |
+| encode         | 418 ns    | 100 ns | ~4x     |
+| decode (owned) | 587 ns    | 90 ns  | ~6.5x   |
+| read one field | 557 ns    | 33 ns  | ~17x    |
+
+- `Rkyv` wins across the board; the standout is reading one field, where the zero-copy
+  path (`open_archived`) reads it in place instead of decoding the whole 1 KB record.
+- The read is ~17x, not more, because the store hands back an unaligned `Vec<u8>`: the
+  zero-copy path copies it into an aligned buffer and validates it once (~26 ns) before
+  reading. rkyv over a pre-aligned, pre-validated buffer is ~7 ns (~80x vs bincode), but
+  that is not what the queue can hand you.
+- rkyv asks more of the message type (derive `Archive`/`Serialize`/`Deserialize`, and
+  some types do not fit); `Bincode` only needs serde. Reach for `Rkyv` when decode or
+  field reads are hot, or messages are large.
+- Reproduce with `cargo bench --features serde,rkyv --bench codec`.
+
 ## Takeaways
 
 - The crate's own overhead is in-memory-fast; durability cost is the backend.
