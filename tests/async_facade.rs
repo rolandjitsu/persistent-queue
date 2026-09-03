@@ -92,3 +92,66 @@ async fn async_reserve_returns_none_after_close_and_drain() {
     item.ack().await.unwrap();
     assert!(rx.reserve().await.unwrap().is_none());
 }
+
+// Many producers under tight backpressure, a consumer that nacks some items, then a
+// close-and-drain - so `room`, `items`, and `notify_waiters` all fire under real
+// thread contention. A lost wakeup would deadlock this instead of losing an item.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn async_stress_delivers_every_item() {
+    use std::collections::HashSet;
+
+    const PRODUCERS: u32 = 8;
+    const PER_PRODUCER: u32 = 200;
+    let total = (PRODUCERS * PER_PRODUCER) as usize;
+
+    let (tx, rx) = Builder::new(MemStore::new())
+        .capacity(16) // small, to force heavy backpressure (the `room` path)
+        .open_async()
+        .await
+        .unwrap();
+
+    let mut producers = Vec::new();
+    for p in 0..PRODUCERS {
+        let tx = tx.clone();
+        producers.push(tokio::spawn(async move {
+            for i in 0..PER_PRODUCER {
+                let id = p * PER_PRODUCER + i;
+                tx.push(id.to_le_bytes().to_vec()).await.unwrap();
+            }
+        }));
+    }
+
+    // Drain until closed-and-empty, nacking each id once to exercise redelivery.
+    let consumer = tokio::spawn(async move {
+        let mut acked: HashSet<u32> = HashSet::new();
+        let mut nacked: HashSet<u32> = HashSet::new();
+        let mut deliveries = 0u64;
+        while let Some(item) = rx.reserve().await.unwrap() {
+            let id = u32::from_le_bytes((&*item).try_into().unwrap());
+            deliveries += 1;
+            if deliveries.is_multiple_of(7) && nacked.insert(id) {
+                item.nack();
+            } else {
+                item.ack().await.unwrap();
+                acked.insert(id);
+            }
+        }
+        acked
+    });
+
+    for p in producers {
+        p.await.unwrap();
+    }
+    tx.close(); // wakes the consumer to finish draining
+
+    let acked = consumer.await.unwrap();
+    assert_eq!(
+        acked.len(),
+        total,
+        "every distinct id was delivered and acked"
+    );
+    assert!(
+        (0..total as u32).all(|id| acked.contains(&id)),
+        "no id was lost"
+    );
+}
