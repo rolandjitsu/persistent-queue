@@ -45,6 +45,8 @@ pub use typed::{
 pub use async_queue::{AsyncConsumer, AsyncEnds, AsyncProducer, AsyncReserved};
 #[cfg(feature = "serde")]
 pub use codec::Bincode;
+#[cfg(feature = "rkyv")]
+pub use codec::Rkyv;
 
 #[cfg(feature = "redb")]
 pub use store::RedbStore;

@@ -118,3 +118,45 @@ mod serde_codec {
         again.ack().unwrap();
     }
 }
+
+#[cfg(feature = "rkyv")]
+mod rkyv_codec {
+    use persistent_queue::{Builder, MemStore, Rkyv};
+
+    #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, PartialEq)]
+    struct Job {
+        id: u64,
+        name: String,
+    }
+
+    #[test]
+    fn rkyv_roundtrips_in_order() {
+        let (tx, rx) = Builder::new(MemStore::new()).open_typed(Rkyv).unwrap();
+        tx.push(&Job {
+            id: 1,
+            name: "a".into(),
+        })
+        .unwrap();
+        tx.push(&Job {
+            id: 2,
+            name: "b".into(),
+        })
+        .unwrap();
+
+        let first = rx.reserve().unwrap().unwrap();
+        assert_eq!(
+            *first,
+            Job {
+                id: 1,
+                name: "a".into()
+            }
+        );
+        first.ack().unwrap();
+
+        let second = rx.reserve().unwrap().unwrap();
+        assert_eq!(second.id, 2);
+        second.ack().unwrap();
+
+        assert!(rx.reserve().unwrap().is_none());
+    }
+}

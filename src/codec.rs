@@ -70,3 +70,57 @@ where
         bincode::deserialize(bytes).map_err(CodecError::new)
     }
 }
+
+/// A [`Codec`] that encodes with rkyv. Requires the `rkyv` feature. The message type
+/// must derive rkyv's `Archive`, `Serialize`, and `Deserialize`.
+///
+/// ```
+/// use persistent_queue::{Builder, MemStore, Rkyv};
+///
+/// #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, PartialEq)]
+/// struct Job {
+///     id: u64,
+///     name: String,
+/// }
+///
+/// let (tx, rx) = Builder::new(MemStore::new()).open_typed(Rkyv).unwrap();
+/// tx.push(&Job { id: 1, name: "build".into() }).unwrap();
+///
+/// let item = rx.reserve().unwrap().unwrap();
+/// assert_eq!(*item, Job { id: 1, name: "build".into() });
+/// item.ack().unwrap();
+/// ```
+#[cfg(feature = "rkyv")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Rkyv;
+
+#[cfg(feature = "rkyv")]
+impl<T> Codec<T> for Rkyv
+where
+    T: rkyv::Archive
+        + for<'a> rkyv::Serialize<
+            rkyv::rancor::Strategy<
+                rkyv::ser::Serializer<
+                    rkyv::util::AlignedVec,
+                    rkyv::ser::allocator::ArenaHandle<'a>,
+                    rkyv::ser::sharing::Share,
+                >,
+                rkyv::rancor::Error,
+            >,
+        >,
+    T::Archived: for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>>
+        + rkyv::Deserialize<T, rkyv::api::high::HighDeserializer<rkyv::rancor::Error>>,
+{
+    fn encode(&self, value: &T) -> Result<Vec<u8>, CodecError> {
+        rkyv::to_bytes::<rkyv::rancor::Error>(value)
+            .map(|bytes| bytes.to_vec())
+            .map_err(CodecError::new)
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Result<T, CodecError> {
+        // rkyv needs an aligned buffer; the store hands back a plain `Vec<u8>`.
+        let mut aligned = rkyv::util::AlignedVec::<16>::new();
+        aligned.extend_from_slice(bytes);
+        rkyv::from_bytes::<T, rkyv::rancor::Error>(&aligned).map_err(CodecError::new)
+    }
+}
