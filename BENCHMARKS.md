@@ -89,6 +89,24 @@ rocksdb:
 
 Disk was not swept on macOS (see "Read this first"). Use the Linux numbers.
 
+## Async facade overhead
+
+The `tokio` facade runs each store op (push, reserve, ack) on `spawn_blocking`, so it
+adds one blocking-pool hop per op over the sync core - a big multiplier on an in-memory
+op, and a rounding error next to an fsync. One push + reserve + ack, macOS:
+
+| Backend           | sync    | async facade |
+| ----------------- | ------: | -----------: |
+| `MemStore`        | 148 ns  | 8.8 us       |
+| `sled` (fsync/op) | 10.7 ms | 13.8 ms      |
+
+- On `MemStore` the facade adds ~8.6 us (the three `spawn_blocking` hops against a
+  ~150 ns memory op, ~60x). Prefer the sync API for raw in-memory throughput.
+- On `sled` the ~10 ms fsync dominates; the hop is negligible, and the gap here is
+  macOS fsync jitter (the async run spanned 11.6-17 ms). The facade is effectively free
+  once a durable write is involved.
+- Reproduce with `cargo bench --features tokio,sled --bench async_overhead`.
+
 ## Takeaways
 
 - The crate's own overhead is in-memory-fast; durability cost is the backend.
