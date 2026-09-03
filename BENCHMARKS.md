@@ -111,7 +111,17 @@ op, and a rounding error next to an fsync. One push + reserve + ack, macOS:
 
 Per-message cost of the typed layer's codecs, on a queue-message-shaped record (a u64,
 u32, u64, a short string, and a 1 KB payload): encode, full owned decode, and reading
-a single field. macOS:
+a single field.
+
+Linux:
+
+| operation      | `Bincode` | `Rkyv` | speedup |
+| -------------- | --------: | -----: | ------: |
+| encode         | 498 ns    | 94 ns  | ~5x     |
+| decode (owned) | 750 ns    | 61 ns  | ~12x    |
+| read one field | 756 ns    | 24 ns  | ~31x    |
+
+macOS:
 
 | operation      | `Bincode` | `Rkyv` | speedup |
 | -------------- | --------: | -----: | ------: |
@@ -121,10 +131,9 @@ a single field. macOS:
 
 - `Rkyv` wins across the board; the standout is reading one field, where the zero-copy
   path (`open_archived`) reads it in place instead of decoding the whole 1 KB record.
-- The read is ~17x, not more, because the store hands back an unaligned `Vec<u8>`: the
-  zero-copy path copies it into an aligned buffer and validates it once (~26 ns) before
-  reading. rkyv over a pre-aligned, pre-validated buffer is ~7 ns (~80x vs bincode), but
-  that is not what the queue can hand you.
+- The read is ~17-31x (not the ~100x of a pre-aligned buffer) because the store hands
+  back an unaligned `Vec<u8>`: the zero-copy path copies it into an aligned buffer and
+  validates it once (~20-26 ns) before reading in place.
 - rkyv asks more of the message type (derive `Archive`/`Serialize`/`Deserialize`, and
   some types do not fit); `Bincode` only needs serde. Reach for `Rkyv` when decode or
   field reads are hot, or messages are large.
