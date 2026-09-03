@@ -3,6 +3,12 @@
 All notable changes are documented here. This file is managed by
 [knope](https://knope.tech/) from the Conventional Commits on `main`; do not edit it by
 hand.
+## 0.1.4 (2026-09-03)
+
+### Features
+
+- add a tokio async facade behind the tokio feature
+
 ## 0.1.3 (2026-08-30)
 
 ### Features
