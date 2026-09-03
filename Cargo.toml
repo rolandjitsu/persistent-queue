@@ -34,11 +34,15 @@ tokio = { version = "1", optional = true, features = ["rt", "sync"] }
 tempfile = "3"
 criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 # loom is pulled in only under `--cfg loom`, for the model-checked concurrency tests.
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"
+
+# tokio is only for the async-facade tests. Exclude it under `--cfg loom`: tokio's own
+# loom cfg-paths do not compile, and the loom models never use it.
+[target.'cfg(not(loom))'.dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
