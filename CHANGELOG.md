@@ -3,6 +3,13 @@
 All notable changes are documented here. This file is managed by
 [knope](https://knope.tech/) from the Conventional Commits on `main`; do not edit it by
 hand.
+## 0.1.5 (2026-09-04)
+
+### Features
+
+- add an rkyv codec behind the rkyv feature
+- add a zero-copy rkyv read path via open_archived
+
 ## 0.1.4 (2026-09-03)
 
 ### Features
