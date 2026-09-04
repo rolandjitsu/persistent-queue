@@ -15,11 +15,12 @@
 //! item.ack().unwrap();
 //! ```
 //!
-//! For typed messages, [`Builder::open_typed`] wraps the queue with a [`Codec`] that
-//! encodes on push and decodes on reserve (serde and bincode behind the `serde`
-//! feature). With the `tokio` feature, [`Builder::open_async`] gives async
-//! producer/consumer handles that run store I/O on tokio's blocking pool and wait
-//! (for capacity, or the next item) asynchronously.
+//! For typed messages, [`Builder::open_typed`] wraps the queue with a [`Codec`]
+//! (`serde` + `bincode`, or `rkyv`, behind their features), and
+//! [`Builder::open_archived`] (rkyv) reads an item as `&Archived<T>` without decoding
+//! it. With the `tokio` feature, [`Builder::open_async`] gives async producer/consumer
+//! handles that run store I/O on tokio's blocking pool and wait (for capacity, or the
+//! next item) asynchronously.
 //!
 //! See `DESIGN.md` for the on-disk layout, crash recovery, and durability model.
 #![warn(missing_docs)]

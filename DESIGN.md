@@ -117,8 +117,10 @@ Backends: `mem` (a `Mutex<BTreeMap>`, the default; `durable` is a no-op), `sled`
 store - a raw append-only file, an object store - is a downstream `Store` impl.
 
 A typed layer (`Builder::open_typed`) wraps this byte core with a `Codec` that encodes
-on push and decodes on reserve; `serde` + `bincode` is built in behind the `serde`
-feature. The store stays pure bytes - the codec is the only thing that knows the shape.
+on push and decodes on reserve; `serde` + `bincode` and `rkyv` codecs are built in
+behind their features, and `Builder::open_archived` (rkyv) reads an item as
+`&Archived<T>` without decoding it. The store stays pure bytes - the codec is the only
+thing that knows the shape.
 
 ## Concurrency
 
