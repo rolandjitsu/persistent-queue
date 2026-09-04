@@ -45,7 +45,7 @@ loom = "0.7"
 # not compile under `--cfg loom`. They are only used by the benches and async tests,
 # never by the loom models, so exclude them from the loom build.
 [target.'cfg(not(loom))'.dev-dependencies]
-criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support", "async_tokio"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support", "async_tokio"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 rkyv = "0.8"
 
