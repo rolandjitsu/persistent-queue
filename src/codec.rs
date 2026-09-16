@@ -63,11 +63,15 @@ where
     T: serde::Serialize + serde::de::DeserializeOwned,
 {
     fn encode(&self, value: &T) -> Result<Vec<u8>, CodecError> {
-        bincode::serialize(value).map_err(CodecError::new)
+        // `legacy()` is little-endian + fixint, byte-identical to bincode 1.x's
+        // default, so queues written before this upgrade still decode.
+        bincode::serde::encode_to_vec(value, bincode::config::legacy()).map_err(CodecError::new)
     }
 
     fn decode(&self, bytes: &[u8]) -> Result<T, CodecError> {
-        bincode::deserialize(bytes).map_err(CodecError::new)
+        bincode::serde::decode_from_slice(bytes, bincode::config::legacy())
+            .map(|(value, _)| value)
+            .map_err(CodecError::new)
     }
 }
 
