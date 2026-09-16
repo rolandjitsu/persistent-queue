@@ -10,6 +10,12 @@ updates:
       interval: weekly
     commit-message:
       prefix: chore
+    ignore:
+      # bincode 3.0.0 is a `compile_error!` placeholder, not a real release.
+      # Scope the ignore to that exact version so a genuine future 3.x still
+      # surfaces.
+      - dependency-name: bincode
+        versions: ["3.0.0"]
     groups:
       cargo-patch:
         update-types: ["patch"]
