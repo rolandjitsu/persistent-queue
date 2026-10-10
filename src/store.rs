@@ -176,6 +176,10 @@ impl Store for SledStore {
 
 // ---- redb ----
 
+// redb 3.0 moved `begin_read` to the `ReadableDatabase` trait.
+#[cfg(feature = "redb")]
+use redb::ReadableDatabase;
+
 #[cfg(feature = "redb")]
 const REDB_TABLE: redb::TableDefinition<'static, &[u8], &[u8]> =
     redb::TableDefinition::new("entries");
@@ -248,7 +252,8 @@ impl Store for RedbStore {
     fn commit(&self, ops: &[Op<'_>], durable: bool) -> Result<(), Self::Error> {
         let mut wtx = self.db.begin_write()?;
         if !durable {
-            wtx.set_durability(redb::Durability::None);
+            // redb 3.0 made `set_durability` fallible.
+            wtx.set_durability(redb::Durability::None)?;
         }
         {
             let mut table = wtx.open_table(REDB_TABLE)?;
