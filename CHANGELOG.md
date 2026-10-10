@@ -3,6 +3,16 @@
 All notable changes are documented here. This file is managed by
 [knope](https://knope.tech/) from the Conventional Commits on `main`; do not edit it by
 hand.
+## 0.2.0 (2026-10-10)
+
+### Breaking Changes
+
+- redb 4 cannot open a database written by redb 2. The
+v2 on-disk format was dropped in redb 3.0; migrate an existing store
+with redb 2.6's `Database::upgrade()` before upgrading. redb types also
+appear in `RedbStore`'s public API, so bumping its major version is
+breaking for dependents.
+
 ## 0.1.5 (2026-09-04)
 
 ### Features
