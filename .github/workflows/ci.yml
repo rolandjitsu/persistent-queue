@@ -138,4 +138,4 @@ jobs:
       # Dependabot commit messages are auto-generated and can exceed the length
       # rules; exempt them (keyed on PR author so maintainer re-runs stay stable).
       - if: github.event.pull_request.user.login != 'dependabot[bot]'
-        uses: crate-ci/committed@v1.1.11
+        uses: crate-ci/committed@v1.1.12
